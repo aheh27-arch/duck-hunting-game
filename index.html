@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>E-Kotak Nombor Ceria — Duck Hunting Prasekolah</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Fredoka', cursive, sans-serif;
+            background-color: #70a1ff;
+        }
+
+        #game-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Camera Preview Widget */
+        #camera-preview-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 4px solid #ff4757;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            z-index: 25;
+            background: #2f3542;
+            transform: scaleX(-1);
+        }
+
+        #webcam-video {
+            display: none;
+        }
+
+        #camera-canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Custom Crosshair */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 64px;
+            height: 64px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 20;
+            transition: transform 0.05s linear;
+        }
+
+        #crosshair.aiming {
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+
+        #crosshair.shooting {
+            transform: translate(-50%, -50%) scale(0.8);
+        }
+
+        /* Animated Toast Messages */
+        .toast-pop {
+            animation: popInOut 1.2s ease-in-out forwards;
+        }
+
+        @keyframes popInOut {
+            0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
+            40% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            70% { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+        }
+
+        /* Pulse animation for HUD */
+        .pulse-card {
+            animation: softPulse 2s infinite alternate;
+        }
+
+        @keyframes softPulse {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.03); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Game Canvas -->
+    <div id="game-container"></div>
+
+    <!-- Hidden Video & Webcam Canvas Widget -->
+    <video id="webcam-video" playsinline></video>
+    <div id="camera-preview-container">
+        <canvas id="camera-canvas"></canvas>
+    </div>
+
+    <!-- Crosshair Target Icon -->
+    <div id="crosshair">
+        <svg viewBox="0 0 100 100" width="100%" height="100%">
+            <circle cx="50" cy="50" r="40" stroke="#ff4757" stroke-width="6" fill="none" opacity="0.8"/>
+            <circle cx="50" cy="50" r="25" stroke="#ffa502" stroke-width="4" fill="none"/>
+            <circle cx="50" cy="50" r="6" fill="#ff4757"/>
+            <line x1="50" y1="2" x2="50" y2="20" stroke="#ff4757" stroke-width="6" stroke-linecap="round"/>
+            <line x1="50" y1="80" x2="50" y2="98" stroke="#ff4757" stroke-width="6" stroke-linecap="round"/>
+            <line x1="2" y1="50" x2="20" y2="50" stroke="#ff4757" stroke-width="6" stroke-linecap="round"/>
+            <line x1="80" y1="50" x2="98" y2="50" stroke="#ff4757" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+    </div>
+
+    <!-- Main Game HUD Overlay -->
+    <div id="ui-overlay" class="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-4 md:p-6">
+        
+        <!-- Top HUD Header -->
+        <div class="flex justify-between items-center gap-2">
+            <!-- Score & Level -->
+            <div class="flex gap-2 md:gap-4">
+                <div class="bg-white/90 backdrop-blur border-4 border-yellow-400 rounded-2xl px-4 py-2 shadow-lg text-center">
+                    <span class="block text-xs font-bold text-yellow-600 uppercase">⭐ SKOR</span>
+                    <span id="score-val" class="text-2xl md:text-3xl font-black text-gray-800">0</span>
+                </div>
+                <div class="bg-white/90 backdrop-blur border-4 border-blue-400 rounded-2xl px-4 py-2 shadow-lg text-center">
+                    <span class="block text-xs font-bold text-blue-600 uppercase">🎯 ARAS</span>
+                    <span id="level-val" class="text-2xl md:text-3xl font-black text-gray-800">1</span>
+                </div>
+            </div>
+
+            <!-- Lives & Timer -->
+            <div class="flex gap-2 md:gap-4">
+                <div class="bg-white/90 backdrop-blur border-4 border-pink-400 rounded-2xl px-4 py-2 shadow-lg text-center">
+                    <span class="block text-xs font-bold text-pink-600 uppercase">❤️ NYAWA</span>
+                    <span id="lives-val" class="text-2xl md:text-3xl font-black">❤️❤️❤️</span>
+                </div>
+                <div class="bg-white/90 backdrop-blur border-4 border-orange-400 rounded-2xl px-4 py-2 shadow-lg text-center min-w-[80px]">
+                    <span class="block text-xs font-bold text-orange-600 uppercase">⏱️ MASA</span>
+                    <span id="timer-val" class="text-2xl md:text-3xl font-black text-orange-600">60s</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Question Card Banner -->
+        <div class="self-center my-auto pointer-events-none">
+            <div id="question-card" class="bg-gradient-to-r from-yellow-300 via-orange-400 to-pink-500 border-4 border-white rounded-3xl p-4 md:p-6 shadow-2xl text-center max-w-xl pulse-card">
+                <div id="activity-badge" class="inline-block bg-white text-pink-600 text-xs md:text-sm font-bold px-3 py-1 rounded-full mb-2 shadow">
+                    🎯 AKTIVITI 1: CARI NOMBOR
+                </div>
+                <div id="question-prompt" class="text-2xl md:text-4xl font-extrabold text-white drop-shadow-md">
+                    CARI NOMBOR 5
+                </div>
+                <!-- Object display box for counting activity -->
+                <div id="object-container" class="hidden flex-wrap justify-center gap-2 mt-3 p-3 bg-white/30 rounded-2xl"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Gesture / Input Status Bar -->
+        <div class="flex justify-between items-end">
+            <div id="gesture-status" class="bg-black/70 backdrop-blur border-2 border-white/40 rounded-full px-5 py-2 text-white text-sm md:text-base font-bold flex items-center gap-3 shadow-lg">
+                <div id="status-dot" class="w-4 h-4 rounded-full bg-red-500"></div>
+                <span id="status-text">🖱️ MOD TETIKUS / TOUCH</span>
+            </div>
+
+            <div class="bg-white/80 backdrop-blur text-gray-800 text-xs md:text-sm font-bold px-4 py-2 rounded-2xl shadow">
+                SOALAN: <span id="question-num" class="text-pink-600 font-extrabold">1</span> / 10
+            </div>
+        </div>
+    </div>
+
+    <!-- Pop-up Toast Feedback -->
+    <div id="toast-container" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30 hidden">
+        <div id="toast-body" class="text-4xl md:text-6xl font-black text-white px-8 py-4 rounded-3xl border-8 border-white shadow-2xl text-center drop-shadow-lg">
+            🎉 SYABAS!
+        </div>
+    </div>
+
+    <!-- Start Modal -->
+    <div id="start-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-40 flex items-center justify-center p-4">
+        <div class="bg-gradient-to-b from-sky-400 to-indigo-600 border-8 border-yellow-300 rounded-3xl p-6 md:p-8 max-w-lg text-center shadow-2xl text-white">
+            <h1 class="text-3xl md:text-5xl font-black text-yellow-300 drop-shadow-md mb-2">🦆 DUCK HUNTING</h1>
+            <h2 class="text-xl md:text-2xl font-bold mb-4 text-sky-100">KENALI NOMBOR 1 HINGGA 10</h2>
+            
+            <div class="bg-white/20 rounded-2xl p-4 text-left text-sm md:text-base space-y-2 mb-6 border border-white/30">
+                <p class="font-bold text-yellow-200">🎯 Cara Bermain:</p>
+                <p>1. Masa permainan: ⏱️ <b>1 Minit (60 saat)</b>.</p>
+                <p>2. Lihat nombor / soalan pada kad atas.</p>
+                <p>3. Cari itik yang membawa nombor yang betul.</p>
+                <p>4. ☝️ <b>Point / Halakan Crosshair</b> ke itik sasaran.</p>
+                <p>5. 🤏 <b>Pinch (Genggam Jari)</b> atau <b>Klik Tetikus / Sentuh Skrin</b> untuk menembak!</p>
+            </div>
+
+            <button id="start-btn" class="w-full bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-300 hover:to-orange-400 text-gray-900 text-2xl font-black py-4 px-8 rounded-2xl shadow-xl transition transform active:scale-95 border-4 border-white">
+                🚀 MULA BERMAIN
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Over / Victory Modal -->
+    <div id="gameover-modal" class="fixed inset-0 bg-slate-900/85 backdrop-blur-md z-40 flex items-center justify-center p-4 hidden">
+        <div class="bg-gradient-to-b from-purple-600 to-indigo-800 border-8 border-yellow-300 rounded-3xl p-6 md:p-8 max-w-lg text-center shadow-2xl text-white">
+            <h1 id="gameover-title" class="text-3xl md:text-5xl font-black text-yellow-300 drop-shadow-md mb-2">🎉 TAHNIAH!</h1>
+            <p id="gameover-subtitle" class="text-lg md:text-xl font-semibold mb-6 text-purple-200">Anda telah menyelesaikan permainan!</p>
+
+            <div class="grid grid-cols-2 gap-4 mb-6 text-gray-800">
+                <div class="bg-white rounded-2xl p-3 shadow">
+                    <span class="block text-xs font-bold text-gray-500 uppercase">JUMLAH SKOR</span>
+                    <span id="final-score" class="text-3xl font-black text-yellow-500">0</span>
+                </div>
+                <div class="bg-white rounded-2xl p-3 shadow">
+                    <span class="block text-xs font-bold text-gray-500 uppercase">KETEPATAN</span>
+                    <span id="final-accuracy" class="text-3xl font-black text-green-500">100%</span>
+                </div>
+            </div>
+
+            <button id="restart-btn" class="w-full bg-gradient-to-r from-green-400 to-emerald-500 hover:from-green-300 hover:to-emerald-400 text-white text-2xl font-black py-4 px-8 rounded-2xl shadow-xl transition transform active:scale-95 border-4 border-white">
+                🔄 MAIN LAGI
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- GAME STATE VARIABLES ---
+        let scene, camera, renderer;
+        let ducks = [];
+        let particles = [];
+        let currentQuestion = null;
+        
+        let score = 0;
+        let level = 1;
+        let lives = 3;
+        let questionCount = 0;
+        let totalHits = 0;
+        let totalShots = 0;
+        let comboCount = 0;
+        let gameTimer = 60; // 1-minute time limit
+        let gameTimerInterval = null;
+        let gameActive = false;
+
+        // Interaction States
+        let crosshairPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        let isPinching = false;
+        let pinchCooldown = false;
+        let webcamActive = false;
+        let webcamAttempted = false;
+        let targetedDuck = null;
+
+        // Sound Synthesis Helper
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                if (type === 'hit') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                    osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2); // A5
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.2);
+                } else if (type === 'miss') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.3);
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.3);
+                } else if (type === 'quack') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                    osc.frequency.setValueAtTime(450, audioCtx.currentTime + 0.08);
+                    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.15);
+                }
+            } catch (e) {
+                // Ignore audio errors
+            }
+        }
+
+        // --- THREE.JS 3D SCENE SETUP ---
+        function init3D() {
+            const container = document.getElementById('game-container');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Bright Sky Blue
+            scene.fog = new THREE.Fog(0x87ceeb, 20, 60);
+
+            camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 3, 12);
+            camera.lookAt(0, 3, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xfffaed, 0.8);
+            sunLight.position.set(10, 20, 10);
+            sunLight.castShadow = true;
+            scene.add(sunLight);
+
+            // Environment: Water Pond
+            const waterGeo = new THREE.PlaneGeometry(80, 40);
+            const waterMat = new THREE.MeshStandardMaterial({ color: 0x1e90ff, roughness: 0.1, metalness: 0.2 });
+            const water = new THREE.Mesh(waterGeo, waterMat);
+            water.rotation.x = -Math.PI / 2;
+            water.position.set(0, -1, -10);
+            scene.add(water);
+
+            // Environment: Green Hills
+            const hillMat = new THREE.MeshStandardMaterial({ color: 0x2ed573, roughness: 0.8 });
+            
+            const hill1 = new THREE.Mesh(new THREE.SphereGeometry(15, 16, 16), hillMat);
+            hill1.position.set(-18, -8, -15);
+            scene.add(hill1);
+
+            const hill2 = new THREE.Mesh(new THREE.SphereGeometry(20, 16, 16), hillMat);
+            hill2.position.set(15, -10, -18);
+            scene.add(hill2);
+
+            // Clouds
+            createClouds();
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function createClouds() {
+            const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0 });
+            for (let i = 0; i < 6; i++) {
+                const cloudGroup = new THREE.Group();
+                const numSpheres = 3 + Math.floor(Math.random() * 3);
+                for (let j = 0; j < numSpheres; j++) {
+                    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1.5 + Math.random(), 8, 8), cloudMat);
+                    sphere.position.set(j * 1.2, Math.random() * 0.5, Math.random() * 0.5);
+                    cloudGroup.add(sphere);
+                }
+                cloudGroup.position.set(-25 + Math.random() * 50, 8 + Math.random() * 4, -10 - Math.random() * 10);
+                scene.add(cloudGroup);
+            }
+        }
+
+        // --- CARTOON DUCK 3D MESH BUILDER ---
+        function create3DDuckMesh(numberValue) {
+            const duckGroup = new THREE.Group();
+
+            // Yellow Body
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffda79, roughness: 0.3 });
+            const body = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 16), bodyMat);
+            body.scale.set(1, 0.8, 1.2);
+            duckGroup.add(body);
+
+            // Head
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 16), bodyMat);
+            head.position.set(0, 0.8, 0.5);
+            duckGroup.add(head);
+
+            // Orange Beak
+            const beakMat = new THREE.MeshStandardMaterial({ color: 0xff793f });
+            const beak = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.5, 8), beakMat);
+            beak.rotation.x = Math.PI / 2;
+            beak.position.set(0, 0.7, 1.1);
+            duckGroup.add(beak);
+
+            // Eyes
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
+            leftEye.position.set(-0.25, 0.9, 0.9);
+            const rightEye = leftEye.clone();
+            rightEye.position.set(0.25, 0.9, 0.9);
+            duckGroup.add(leftEye);
+            duckGroup.add(rightEye);
+
+            // Large Clear Number Canvas Board Attached Above Duck
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // White rounded box background with fallback for browsers without roundRect
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(10, 10, 236, 236, 40);
+            } else {
+                ctx.rect(10, 10, 236, 236);
+            }
+            ctx.fill();
+            ctx.lineWidth = 12;
+            ctx.strokeStyle = '#ff9f43';
+            ctx.stroke();
+
+            // Bold Number Text
+            ctx.fillStyle = '#222f3e';
+            ctx.font = 'bold 150px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(numberValue, 128, 128);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const boardMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+            const board = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8), boardMat);
+            board.position.set(0, 2.2, 0);
+            duckGroup.add(board);
+
+            // Glow Ring for Target Hovering
+            const ringGeo = new THREE.RingGeometry(1.3, 1.5, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, side: THREE.DoubleSide, transparent: true, opacity: 0 });
+            const targetRing = new THREE.Mesh(ringGeo, ringMat);
+            targetRing.position.set(0, 2.2, 0.05);
+            duckGroup.add(targetRing);
+
+            duckGroup.userData = {
+                number: numberValue,
+                ringMesh: targetRing,
+                speedX: 0,
+                baseY: 0,
+                amplitude: 0.5,
+                frequency: 2
+            };
+
+            return duckGroup;
+        }
+
+        // --- QUESTION GENERATOR (PRESCHOOL MATH 1-10) ---
+        function generateQuestion() {
+            questionCount++;
+            document.getElementById('question-num').innerText = questionCount;
+
+            // Determine Number Range based on Level
+            let maxNum = 3;
+            if (level === 2) maxNum = 5;
+            if (level === 3) maxNum = 7;
+            if (level >= 4) maxNum = 10;
+
+            const targetNum = Math.floor(Math.random() * maxNum) + 1;
+            const activityType = Math.floor(Math.random() * 4) + 1; // 1 to 4
+
+            const activityBadge = document.getElementById('activity-badge');
+            const questionPrompt = document.getElementById('question-prompt');
+            const objectContainer = document.getElementById('object-container');
+
+            objectContainer.classList.add('hidden');
+            objectContainer.innerHTML = '';
+
+            if (activityType === 1) {
+                // CARI NOMBOR
+                activityBadge.innerText = "🎯 AKTIVITI 1: CARI NOMBOR";
+                questionPrompt.innerText = `CARI NOMBOR ${targetNum}`;
+            } else if (activityType === 2) {
+                // NOMBOR YANG SAMA
+                activityBadge.innerText = "🔎 AKTIVITI 2: NOMBOR YANG SAMA";
+                questionPrompt.innerText = `PADANKAN NOMBOR 👉 [ ${targetNum} ]`;
+            } else if (activityType === 3) {
+                // KIRA DAN PILIH
+                activityBadge.innerText = "🍎 AKTIVITI 3: KIRA DAN PILIH";
+                questionPrompt.innerText = "BERAPA BUAH DI BAWAH?";
+                
+                objectContainer.classList.remove('hidden');
+                const items = ['🍎', '⭐', '🎈', '🌸', '⚽'];
+                const selectedItem = items[Math.floor(Math.random() * items.length)];
+                for (let i = 0; i < targetNum; i++) {
+                    const span = document.createElement('span');
+                    span.className = 'text-3xl md:text-4xl';
+                    span.innerText = selectedItem;
+                    objectContainer.appendChild(span);
+                }
+            } else {
+                // DENGAR DAN CARI
+                activityBadge.innerText = "🔊 AKTIVITI 4: DENGAR DAN CARI";
+                questionPrompt.innerText = `SEBUTAN: "NOMBOR ${targetNum}"`;
+                speakNumber(targetNum);
+            }
+
+            currentQuestion = {
+                target: targetNum,
+                type: activityType
+            };
+
+            spawnDucks(targetNum, maxNum);
+        }
+
+        function spawnDucks(targetNum, maxNum) {
+            // Clear existing ducks
+            ducks.forEach(d => scene.remove(d.mesh));
+            ducks = [];
+
+            // Generate distractors
+            let choices = [targetNum];
+            while (choices.length < (level >= 5 ? 4 : 3)) {
+                let randomNum = Math.floor(Math.random() * maxNum) + 1;
+                if (!choices.includes(randomNum)) {
+                    choices.push(randomNum);
+                }
+            }
+            // Shuffle
+            choices.sort(() => Math.random() - 0.5);
+
+            const startX = -10;
+            const spacing = 20 / choices.length;
+
+            choices.forEach((num, index) => {
+                const duckMesh = create3DDuckMesh(num);
+                const spawnX = startX + (index * spacing) + (Math.random() * 2 - 1);
+                const spawnY = 2 + Math.random() * 3;
+                const spawnZ = -2 - Math.random() * 4;
+
+                duckMesh.position.set(spawnX, spawnY, spawnZ);
+                
+                const speed = (0.02 + level * 0.008) * (Math.random() > 0.5 ? 1 : -1);
+                duckMesh.userData.speedX = speed;
+                duckMesh.userData.baseY = spawnY;
+
+                scene.add(duckMesh);
+                ducks.push({
+                    mesh: duckMesh,
+                    number: num
+                });
+            });
+
+            playSound('quack');
+        }
+
+        // Voice Utterance Helper
+        function speakNumber(num) {
+            try {
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance(`Nombor ${num}`);
+                    utterance.lang = 'ms-MY';
+                    window.speechSynthesis.speak(utterance);
+                }
+            } catch (err) {
+                console.warn('Speech synthesis error:', err);
+            }
+        }
+
+        // --- MEDIAPIPE HAND GESTURE TRACKING ---
+        function initMediaPipe() {
+            if (webcamAttempted) return;
+            webcamAttempted = true;
+
+            const video = document.getElementById('webcam-video');
+            const canvas = document.getElementById('camera-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const cameraContainer = document.getElementById('camera-preview-container');
+
+            // Fallback function when camera is restricted or denied
+            function enableMouseFallback(reason) {
+                webcamActive = false;
+                if (statusDot) statusDot.classList.remove('active');
+                if (statusText) statusText.innerText = "🖱️ MOD TETIKUS / TOUCH";
+                if (cameraContainer) cameraContainer.style.display = 'none';
+                console.log(`Webcam not active (${reason}). Using Mouse/Touch fallback mode.`);
+            }
+
+            // Check if MediaPipe scripts and mediaDevices API are available
+            if (typeof window.Hands === 'undefined' || typeof window.Camera === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                enableMouseFallback("MediaPipe library or Camera API unavailable");
+                return;
+            }
+
+            try {
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.65,
+                    minTrackingConfidence: 0.65
+                });
+
+                hands.onResults((results) => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    if (results.image) {
+                        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+                    }
+
+                    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                        webcamActive = true;
+                        if (statusDot) statusDot.classList.add('active');
+
+                        const landmarks = results.multiHandLandmarks[0];
+                        const indexTip = landmarks[8];
+                        const thumbTip = landmarks[4];
+
+                        // Mirror X for intuitive control
+                        const screenX = (1 - indexTip.x) * window.innerWidth;
+                        const screenY = indexTip.y * window.innerHeight;
+
+                        updateCrosshairPosition(screenX, screenY);
+
+                        // Calculate Pinch Distance between Index tip & Thumb tip
+                        const distance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+
+                        if (distance < 0.07) {
+                            if (statusText) statusText.innerText = "🤏 PINCH / SHOOT!";
+                            if (!isPinching && !pinchCooldown && gameActive) {
+                                isPinching = true;
+                                shootTarget();
+                                pinchCooldown = true;
+                                setTimeout(() => { pinchCooldown = false; }, 400);
+                            }
+                        } else {
+                            isPinching = false;
+                            if (statusText) statusText.innerText = "☝️ POINT / AIM";
+                        }
+                    } else {
+                        if (statusDot) statusDot.classList.remove('active');
+                        if (statusText) statusText.innerText = "🖱️ MOD TETIKUS / TOUCH";
+                    }
+                });
+
+                const cameraUtils = new Camera(video, {
+                    onFrame: async () => {
+                        try {
+                            if (hands) await hands.send({ image: video });
+                        } catch (err) {
+                            // Suppress frame processing errors
+                        }
+                    },
+                    width: 320,
+                    height: 240
+                });
+
+                cameraUtils.start().catch((err) => {
+                    enableMouseFallback(err.name || "Permission denied");
+                });
+            } catch (err) {
+                enableMouseFallback(err.message || "Initialization exception");
+            }
+        }
+
+        // --- CROSSHAIR & RAYCASTING TARGETING ---
+        function updateCrosshairPosition(x, y) {
+            crosshairPos.x = x;
+            crosshairPos.y = y;
+
+            const crosshairEl = document.getElementById('crosshair');
+            crosshairEl.style.left = `${x}px`;
+            crosshairEl.style.top = `${y}px`;
+
+            // Check 3D Raycast collision with ducks
+            if (!gameActive) return;
+
+            const mouseVec = new THREE.Vector2(
+                (x / window.innerWidth) * 2 - 1,
+                -(y / window.innerHeight) * 2 + 1
+            );
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouseVec, camera);
+
+            const duckMeshes = ducks.map(d => d.mesh);
+            const intersects = raycaster.intersectObjects(duckMeshes, true);
+
+            // Reset ring opacities
+            ducks.forEach(d => {
+                if (d.mesh.userData.ringMesh) d.mesh.userData.ringMesh.material.opacity = 0;
+            });
+
+            if (intersects.length > 0) {
+                let hitObject = intersects[0].object;
+                while (hitObject.parent && !hitObject.userData.number) {
+                    hitObject = hitObject.parent;
+                }
+                
+                if (hitObject.userData.ringMesh) {
+                    hitObject.userData.ringMesh.material.opacity = 1;
+                    crosshairEl.classList.add('aiming');
+                    targetedDuck = hitObject;
+                }
+            } else {
+                crosshairEl.classList.remove('aiming');
+                targetedDuck = null;
+            }
+        }
+
+        // Mouse & Touch Fallback Controls
+        window.addEventListener('mousemove', (e) => {
+            if (!webcamActive) {
+                updateCrosshairPosition(e.clientX, e.clientY);
+            }
+        });
+
+        window.addEventListener('click', (e) => {
+            if (!webcamActive && gameActive) {
+                updateCrosshairPosition(e.clientX, e.clientY);
+                shootTarget();
+            }
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 0 && gameActive) {
+                const touch = e.touches[0];
+                updateCrosshairPosition(touch.clientX, touch.clientY);
+                shootTarget();
+            }
+        });
+
+        // --- GAME MECHANICS & SHOOTING ---
+        function shootTarget() {
+            if (!gameActive) return;
+            totalShots++;
+
+            const crosshairEl = document.getElementById('crosshair');
+            crosshairEl.classList.add('shooting');
+            setTimeout(() => crosshairEl.classList.remove('shooting'), 150);
+
+            if (targetedDuck) {
+                const duckNumber = targetedDuck.userData.number;
+
+                if (duckNumber === currentQuestion.target) {
+                    // Correct Answer!
+                    totalHits++;
+                    comboCount++;
+                    const points = 10 + (comboCount > 2 ? 5 : 0);
+                    score += points;
+
+                    playSound('hit');
+                    showToast(comboCount > 2 ? `🔥 COMBO! +${points}` : "🎉 SYABAS! BETUL!", "bg-green-500");
+                    createSparkleEffect(targetedDuck.position);
+
+                    // Remove shot duck
+                    scene.remove(targetedDuck);
+                    ducks = ducks.filter(d => d.mesh !== targetedDuck);
+                    targetedDuck = null;
+
+                    document.getElementById('score-val').innerText = score;
+
+                    // Level Up progression check
+                    if (score >= level * 40 && level < 5) {
+                        level++;
+                        document.getElementById('level-val').innerText = level;
+                    }
+
+                    setTimeout(() => {
+                        if (questionCount >= 10) {
+                            endGame(true);
+                        } else {
+                            generateQuestion();
+                        }
+                    }, 1200);
+
+                } else {
+                    // Wrong Answer!
+                    comboCount = 0;
+                    lives--;
+                    playSound('miss');
+                    updateLivesDisplay();
+                    showToast("❌ CUBA LAGI!", "bg-red-500");
+
+                    if (lives <= 0) {
+                        endGame(false);
+                    }
+                }
+            } else {
+                playSound('miss');
+            }
+        }
+
+        function createSparkleEffect(pos) {
+            for (let i = 0; i < 15; i++) {
+                const pGeo = new THREE.SphereGeometry(0.1, 8, 8);
+                const pMat = new THREE.MeshBasicMaterial({ color: 0xffdd59 });
+                const pMesh = new THREE.Mesh(pGeo, pMat);
+                pMesh.position.copy(pos);
+                pMesh.userData = {
+                    vx: (Math.random() - 0.5) * 0.3,
+                    vy: Math.random() * 0.3,
+                    vz: (Math.random() - 0.5) * 0.3,
+                    life: 1.0
+                };
+                scene.add(pMesh);
+                particles.push(pMesh);
+            }
+        }
+
+        function updateLivesDisplay() {
+            let hearts = "";
+            for (let i = 0; i < lives; i++) hearts += "❤️";
+            document.getElementById('lives-val').innerText = hearts || "❌";
+        }
+
+        function showToast(text, bgColorClass) {
+            const container = document.getElementById('toast-container');
+            const body = document.getElementById('toast-body');
+            body.className = `text-4xl md:text-6xl font-black text-white px-8 py-4 rounded-3xl border-8 border-white shadow-2xl text-center drop-shadow-lg ${bgColorClass} toast-pop`;
+            body.innerText = text;
+
+            container.classList.remove('hidden');
+            setTimeout(() => {
+                container.classList.add('hidden');
+            }, 1100);
+        }
+
+        // --- TIMER & GAME LIFECYCLE ---
+        function startGlobalTimer() {
+            clearInterval(gameTimerInterval);
+            gameTimer = 60; // 1 minute limit
+            document.getElementById('timer-val').innerText = `${gameTimer}s`;
+
+            gameTimerInterval = setInterval(() => {
+                if (!gameActive) return;
+                gameTimer--;
+                document.getElementById('timer-val').innerText = `${gameTimer}s`;
+
+                if (gameTimer <= 0) {
+                    clearInterval(gameTimerInterval);
+                    showToast("⏰ MASA 1 MINIT TAMAT!", "bg-orange-500");
+                    setTimeout(() => {
+                        endGame(true);
+                    }, 1200);
+                }
+            }, 1000);
+        }
+
+        function startGame() {
+            score = 0;
+            level = 1;
+            lives = 3;
+            questionCount = 0;
+            comboCount = 0;
+            totalHits = 0;
+            totalShots = 0;
+            gameActive = true;
+
+            document.getElementById('score-val').innerText = score;
+            document.getElementById('level-val').innerText = level;
+            updateLivesDisplay();
+
+            document.getElementById('start-modal').classList.add('hidden');
+            document.getElementById('gameover-modal').classList.add('hidden');
+
+            // Safely initialize camera attempt without blocking game flow
+            if (!webcamActive && !webcamAttempted) {
+                try {
+                    initMediaPipe();
+                } catch (e) {
+                    console.warn('MediaPipe init skipped:', e);
+                }
+            }
+
+            startGlobalTimer();
+            generateQuestion();
+        }
+
+        function endGame(isVictory) {
+            gameActive = false;
+            clearInterval(gameTimerInterval);
+
+            const modal = document.getElementById('gameover-modal');
+            const title = document.getElementById('gameover-title');
+            const subtitle = document.getElementById('gameover-subtitle');
+
+            if (isVictory) {
+                title.innerText = "🎉 MASA TAMAT!";
+                subtitle.innerText = `Anda berjaya menjawab ${totalHits} soalan dalam masa 1 minit!`;
+            } else {
+                title.innerText = "💥 TAMAT PERMAINAN!";
+                subtitle.innerText = "Jangan putus asa, cuba lagi ya!";
+            }
+
+            const accuracy = totalShots > 0 ? Math.round((totalHits / totalShots) * 100) : 0;
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('final-accuracy').innerText = `${accuracy}%`;
+
+            modal.classList.remove('hidden');
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- MAIN RENDER LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Animate Ducks Movement
+            ducks.forEach(d => {
+                d.mesh.position.x += d.mesh.userData.speedX;
+                d.mesh.position.y = d.mesh.userData.baseY + Math.sin(Date.now() * 0.003 * d.mesh.userData.frequency) * d.mesh.userData.amplitude;
+
+                // Bounce at boundaries
+                if (d.mesh.position.x > 11 || d.mesh.position.x < -11) {
+                    d.mesh.userData.speedX *= -1;
+                }
+            });
+
+            // Animate Sparkle Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.position.x += p.userData.vx;
+                p.position.y += p.userData.vy;
+                p.position.z += p.userData.vz;
+                p.userData.life -= 0.03;
+                p.scale.multiplyScalar(0.95);
+
+                if (p.userData.life <= 0) {
+                    scene.remove(p);
+                    particles.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Init on Window Load
+        window.onload = () => {
+            init3D();
+            animate();
+
+            document.getElementById('start-btn').addEventListener('click', startGame);
+            document.getElementById('restart-btn').addEventListener('click', startGame);
+        };
+    </script>
+</body>
+</html>
